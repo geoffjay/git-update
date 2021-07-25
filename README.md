@@ -2,8 +2,6 @@
 
 # git-update
 
----
-
 On every new computer I have to setup my shell to include a function to easily update a repository,
 for this I use:
 
