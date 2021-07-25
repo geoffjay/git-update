@@ -1,4 +1,5 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![Rust Workflow](https://github.com/geoffjay/git-update/actions/workflows/rust.yml/badge.svg)
 
 # git-update
 
