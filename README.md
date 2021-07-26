@@ -4,20 +4,18 @@
 
 # git-update
 
-On every new computer I have to setup my shell to include a function to easily update a repository,
-for this I use:
+`git-update` does the equivalent of:
 
 ```shell
 git fetch --no-tags --all -p &&
-(gff || true) &&
+(git merge --ff-only || true) &&
 git branch -vv | grep ': gone]' | awk '{print $1}' | xargs -n 1 git branch -D &&
 if [ "`git rev-parse --abbrev-ref HEAD`" != "staging" ]; then
     git fetch origin staging:staging
 fi
 ```
 
-which is fine, but why not doing something easier. The goal of this project is to do the same thing
-with the command `git update`.
+Currently, this is just something I use to clean up after myself.
 
 ## Develop
 

@@ -6,7 +6,8 @@
 // fi
 
 use git2::{AutotagOption, Cred, FetchOptions, RemoteCallbacks, Repository};
-use std::io::{self, Write};
+use log::*;
+use regex::Regex;
 use std::{env, str};
 use structopt::StructOpt;
 
@@ -17,25 +18,25 @@ struct Args {
 }
 
 fn run(args: &Args) -> Result<(), git2::Error> {
-    let repo = Repository::open(".")?;
+    let mut repo = Repository::open(".")?;
     let remote = args.arg_remote.as_ref().map(|s| &s[..]).unwrap_or("origin");
 
-    // Figure out whether it's a named remote or a URL
-    println!("Fetching {} for repo", remote);
+    info!("Fetching {} for repo", remote);
 
-    let remote = repo
-        .find_remote(remote)
-        .or_else(|_| repo.remote_anonymous(remote))?;
-
-    fetch_remote(remote)?;
-    merge(repo)?;
+    fetch_remote(&mut repo, remote)?;
+    merge(&mut repo)?;
+    // prune_deleted_branches(&mut repo)?;
+    fetch_origin_head(&mut repo, remote)?;
 
     Ok(())
 }
 
-fn fetch_remote(mut remote: git2::Remote) -> Result<(), git2::Error> {
+fn fetch_remote(repo: &mut git2::Repository, remote: &str) -> Result<(), git2::Error> {
+    let mut remote = repo
+        .find_remote(remote)
+        .or_else(|_| repo.remote_anonymous(remote))?;
+
     let mut callbacks = RemoteCallbacks::new();
-    callbacks.sideband_progress(git_sideband_progress_cb);
     callbacks.credentials(git_credentials_cb);
     callbacks.update_tips(git_update_tips_cb);
     callbacks.transfer_progress(git_transfer_progress_cb);
@@ -49,17 +50,16 @@ fn fetch_remote(mut remote: git2::Remote) -> Result<(), git2::Error> {
     {
         let stats = remote.stats();
         if stats.local_objects() > 0 {
-            println!(
-                "\rReceived {}/{} objects in {} bytes (used {} local \
-                 objects)",
+            info!(
+                "Received {}/{} objects in {} bytes (used {} local objects)\n",
                 stats.indexed_objects(),
                 stats.total_objects(),
                 stats.received_bytes(),
                 stats.local_objects()
             );
         } else {
-            println!(
-                "\rReceived {}/{} objects in {} bytes",
+            info!(
+                "Received {}/{} objects in {} bytes\n",
                 stats.indexed_objects(),
                 stats.total_objects(),
                 stats.received_bytes()
@@ -67,23 +67,26 @@ fn fetch_remote(mut remote: git2::Remote) -> Result<(), git2::Error> {
         }
     }
 
-    let list = remote.list()?;
-    for head in list {
-        let local_or_remote = match head.is_local() {
-            false => "remote",
-            true => "local",
-        };
-        println!("remote name: {} is {}", head.name(), local_or_remote);
-    }
-
     remote.update_tips(None, true, AutotagOption::Unspecified, None)?;
     remote.disconnect()
 }
 
-fn git_sideband_progress_cb(data: &[u8]) -> bool {
-    print!("remote: {}", str::from_utf8(data).unwrap());
-    io::stdout().flush().unwrap();
-    true
+fn fetch_origin_head(repo: &mut git2::Repository, remote: &str) -> Result<(), git2::Error> {
+    let mut remote = repo
+        .find_remote(remote)
+        .or_else(|_| repo.remote_anonymous(remote))?;
+
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(git_credentials_cb);
+    remote.connect_auth(git2::Direction::Fetch, Some(callbacks), None)?;
+
+    let default = remote.default_branch()?;
+    let branch = default.as_str().unwrap();
+    let re = Regex::new(r"^(refs/heads/)(.*)$").unwrap();
+    let captures = re.captures(branch).unwrap();
+
+    remote.fetch(&[&captures[2]], None, None)?;
+    remote.disconnect()
 }
 
 fn git_credentials_cb(
@@ -101,43 +104,51 @@ fn git_credentials_cb(
 
 fn git_update_tips_cb(refname: &str, a: git2::Oid, b: git2::Oid) -> bool {
     if a.is_zero() {
-        println!("[new]     {:20} {}", b, refname);
+        info!("[new]     {:20} {}\n", b, refname);
     } else {
-        println!("[updated] {:10}..{:10} {}", a, b, refname);
+        info!("[updated] {:10}..{:10} {}\n", a, b, refname);
     }
     true
 }
 
 fn git_transfer_progress_cb(stats: git2::Progress) -> bool {
     if stats.received_objects() == stats.total_objects() {
-        print!(
-            "Resolving deltas {}/{}\r",
+        info!(
+            "Resolving deltas {}/{}\n",
             stats.indexed_deltas(),
             stats.total_deltas()
         );
     } else if stats.total_objects() > 0 {
-        print!(
-            "Received {}/{} objects ({}) in {} bytes\r",
+        info!(
+            "Received {}/{} objects ({}) in {} bytes\n",
             stats.received_objects(),
             stats.total_objects(),
             stats.indexed_objects(),
             stats.received_bytes()
         );
     }
-    io::stdout().flush().unwrap();
     true
 }
 
-fn merge(repo: Repository) -> Result<(), git2::Error> {
+fn merge(repo: &mut Repository) -> Result<(), git2::Error> {
     let mut options = git2::MergeOptions::new();
     options.fail_on_conflict(true);
-    repo.merge(&[], Some(&mut options), None)
+
+    let result = repo.merge(&[], Some(&mut options), None);
+
+    match result {
+        Ok(_result) => info!("test"),
+        Err(e) => error!("{:?}", e),
+    };
+
+    Ok(())
 }
 
 fn main() {
+    env_logger::init();
     let args = Args::from_args();
     match run(&args) {
         Ok(()) => {}
-        Err(e) => println!("error: {}", e),
+        Err(e) => error!("error: {}", e),
     }
 }

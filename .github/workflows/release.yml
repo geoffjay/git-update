@@ -1,22 +1,125 @@
 name: Release
 
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - v*
 
 jobs:
-  release:
-    name: release ${{ matrix.target }}
-    runs-on: ubuntu-latest
+  upload-artifacts:
+    runs-on: ${{ matrix.os.long }}
     strategy:
-      fail-fast: false
       matrix:
-        target: [x86_64-unknown-linux-musl, x86_64-apple-darwin]
+        os:
+          - long: ubuntu-latest
+            short: linux
+          - long: macOS-latest
+            short: mac
+          - long: windows-latest
+            short: win
     steps:
-      - uses: actions/checkout@v2
-      - name: Compile and release
-        uses: rust-build/rust-build.action@latest
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1.0.5
+        with:
+          profile: minimal
+      - run: cargo fetch --verbose
+      - run: cargo build --release
+      - name: Archive
+        shell: bash
+        working-directory: target/release
+        run: |
+          VERSION="${{github.ref}}"
+          VERSION="${VERSION#refs/tags/}"
+          ARCHIVE="git-update-${{matrix.os.short}}-$VERSION.tgz"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+
+          rm -rf artifacts
+          mkdir -p artifacts/git-update
+          cp 'git-update' artifacts/git-update/
+          echo '${{github.sha}} ${{github.ref}}' | tee artifacts/git-update/git-ref
+
+          if command -v sha256sum; then
+              sha256sum 'git-update' | tee artifacts/git-update/sha256sums
+          else
+              shasum -a 256 'git-update' | tee artifacts/git-update/sha256sums
+          fi
+
+          cd artifacts
+          tar cvzf "$ARCHIVE" git-update
+      - uses: actions/upload-artifact@v1
+        with:
+          name: git-update-${{matrix.os.short}}-${{env.VERSION}}
+          path: target/release/artifacts/${{env.ARCHIVE}}
+
+  github-release:
+    needs:
+      - upload-artifacts
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - run: |
+          VERSION="${{github.ref}}"
+          VERSION="${VERSION#refs/tags/}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+      - uses: actions/download-artifact@v1
+        with:
+          name: git-update-linux-${{env.VERSION}}
+          path: ./
+      - uses: actions/download-artifact@v1
+        with:
+          name: git-update-mac-${{env.VERSION}}
+          path: ./
+      - uses: actions/download-artifact@v1
+        with:
+          name: git-update-win-${{env.VERSION}}
+          path: ./
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUSTTARGET: ${{ matrix.target }}
-          EXTRA_FILES: "README.md LICENSE"
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: true
+          prerelease: true
+
+      - name: Upload Release Asset - linux
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: ./git-update-linux-${{env.VERSION}}.tgz
+          asset_name: git-update-linux-${{env.VERSION}}.tgz
+          asset_content_type: application/gzip
+
+      - name: Upload Release Asset - mac
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./git-update-mac-${{env.VERSION}}.tgz
+          asset_name: git-update-mac-${{env.VERSION}}.tgz
+          asset_content_type: application/gzip
+
+      - name: Upload Release Asset - win
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./git-update-win-${{env.VERSION}}.tgz
+          asset_name: git-update-win-${{env.VERSION}}.tgz
+          asset_content_type: application/gzip
+
+# maybe?
+#  cargo-publish:
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v1
+#      - uses: actions-rs/toolchain@v1.0.5
+#        with:
+#          profile: minimal
+#      - run: cargo fetch --verbose
+#      - name: Cargo publish
+#        run: |
+#          cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
