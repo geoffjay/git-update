@@ -1,5 +1,5 @@
 // git fetch --no-tags --all -p &&
-// (gff || true) &&
+// (git merge --ff-only || true) &&
 // git branch -vv | grep ': gone]' | awk '{print $1}' | xargs -n 1 git branch -D &&
 // if [ "`git rev-parse --abbrev-ref HEAD`" != "staging" ]; then
 //     git fetch origin staging:staging
@@ -23,23 +23,30 @@ fn run(args: &Args) -> Result<(), git2::Error> {
     // Figure out whether it's a named remote or a URL
     println!("Fetching {} for repo", remote);
 
-    let mut cb = RemoteCallbacks::new();
-    let mut remote = repo
+    let remote = repo
         .find_remote(remote)
         .or_else(|_| repo.remote_anonymous(remote))?;
 
-    cb.sideband_progress(git_sideband_progress_cb);
-    cb.credentials(git_credentials_cb);
-    cb.update_tips(git_update_tips_cb);
-    cb.transfer_progress(git_transfer_progress_cb);
+    fetch_remote(remote)?;
+    merge(repo)?;
 
-    let mut fo = FetchOptions::new();
-    fo.remote_callbacks(cb);
-    remote.download(&[] as &[&str], Some(&mut fo))?;
+    Ok(())
+}
+
+fn fetch_remote(mut remote: git2::Remote) -> Result<(), git2::Error> {
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.sideband_progress(git_sideband_progress_cb);
+    callbacks.credentials(git_credentials_cb);
+    callbacks.update_tips(git_update_tips_cb);
+    callbacks.transfer_progress(git_transfer_progress_cb);
+
+    let mut options = FetchOptions::new();
+    options.remote_callbacks(callbacks);
+    options.download_tags(git2::AutotagOption::None);
+    options.prune(git2::FetchPrune::On);
+    remote.download(&[] as &[&str], Some(&mut options))?;
 
     {
-        // If there are local objects (we got a thin pack), then tell the user
-        // how many objects we saved from having to cross the network.
         let stats = remote.stats();
         if stats.local_objects() > 0 {
             println!(
@@ -60,11 +67,17 @@ fn run(args: &Args) -> Result<(), git2::Error> {
         }
     }
 
+    let list = remote.list()?;
+    for head in list {
+        let local_or_remote = match head.is_local() {
+            false => "remote",
+            true => "local",
+        };
+        println!("remote name: {} is {}", head.name(), local_or_remote);
+    }
+
     remote.update_tips(None, true, AutotagOption::Unspecified, None)?;
-
-    remote.disconnect()?;
-
-    Ok(())
+    remote.disconnect()
 }
 
 fn git_sideband_progress_cb(data: &[u8]) -> bool {
@@ -113,6 +126,12 @@ fn git_transfer_progress_cb(stats: git2::Progress) -> bool {
     }
     io::stdout().flush().unwrap();
     true
+}
+
+fn merge(repo: Repository) -> Result<(), git2::Error> {
+    let mut options = git2::MergeOptions::new();
+    options.fail_on_conflict(true);
+    repo.merge(&[], Some(&mut options), None)
 }
 
 fn main() {

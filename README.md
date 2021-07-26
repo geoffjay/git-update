@@ -1,5 +1,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-![Rust Workflow](https://github.com/geoffjay/git-update/actions/workflows/rust.yml/badge.svg)
+![Build](https://github.com/geoffjay/git-update/actions/workflows/rust.yml/badge.svg)
+![Release](https://github.com/geoffjay/git-update/actions/workflows/release.yml/badge.svg)
 
 # git-update
 
@@ -17,6 +18,11 @@ fi
 
 which is fine, but why not doing something easier. The goal of this project is to do the same thing
 with the command `git update`.
+
+## Develop
+
+The simplest way to install during development is with `cargo install --path .` which will add the
+binary to the `cargo` bin directory.
 
 ## License
 
